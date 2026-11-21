@@ -248,3 +248,34 @@ variable "oidc_kubeconfig" {
   description = "Builds the kube_config_oidc output: direct API endpoint + kubelogin exec (no secret). The API server's OIDC flags are set in machine_global_config. null = no output"
   default     = null
 }
+
+variable "cluster_agent_customization" {
+  type = object({
+    # JSON of a corev1.Affinity; replaces Rancher's default, which *prefers* control-plane nodes (a small
+    # control plane then carries both cattle-cluster-agent replicas)
+    override_affinity = optional(string)
+    resources = optional(object({
+      cpu_request    = optional(string)
+      cpu_limit      = optional(string)
+      memory_request = optional(string)
+      memory_limit   = optional(string)
+    }))
+  })
+  description = "cattle-cluster-agent deployment customization (affinity, resources); tolerations: agent_tolerations"
+  default     = null
+}
+
+variable "fleet_agent_customization" {
+  type = object({
+    # JSON of a corev1.Affinity; replaces Rancher's default
+    override_affinity = optional(string)
+    resources = optional(object({
+      cpu_request    = optional(string)
+      cpu_limit      = optional(string)
+      memory_request = optional(string)
+      memory_limit   = optional(string)
+    }))
+  })
+  description = "fleet-agent deployment customization (affinity, resources); tolerations: agent_tolerations"
+  default     = null
+}

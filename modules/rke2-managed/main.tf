@@ -89,11 +89,14 @@ resource "rancher2_cluster_v2" "this" {
 
   default_pod_security_admission_configuration_template_name = var.pod_security_admission_template
 
-  # Extra tolerations of Rancher's agents, e.g. the "uninitialized" taint of an out-of-tree cloud
-  # controller: the cluster agent must run before the CCM, which is installed through it
+  # Rancher's agents: extra tolerations (var.agent_tolerations, e.g. the "uninitialized" taint of an out-of-tree
+  # cloud controller: the cluster agent must run before the CCM, which is installed through it) plus an optional
+  # affinity/resources override per agent (var.cluster_agent_customization / var.fleet_agent_customization)
   dynamic "cluster_agent_deployment_customization" {
-    for_each = length(var.agent_tolerations) == 0 ? [] : [1]
+    for_each = local.cluster_agent_customization
     content {
+      override_affinity = cluster_agent_deployment_customization.value.override_affinity
+
       dynamic "append_tolerations" {
         for_each = var.agent_tolerations
         content {
@@ -103,12 +106,24 @@ resource "rancher2_cluster_v2" "this" {
           effect   = append_tolerations.value.effect
         }
       }
+
+      dynamic "override_resource_requirements" {
+        for_each = cluster_agent_deployment_customization.value.resources == null ? [] : [cluster_agent_deployment_customization.value.resources]
+        content {
+          cpu_request    = override_resource_requirements.value.cpu_request
+          cpu_limit      = override_resource_requirements.value.cpu_limit
+          memory_request = override_resource_requirements.value.memory_request
+          memory_limit   = override_resource_requirements.value.memory_limit
+        }
+      }
     }
   }
 
   dynamic "fleet_agent_deployment_customization" {
-    for_each = length(var.agent_tolerations) == 0 ? [] : [1]
+    for_each = local.fleet_agent_customization
     content {
+      override_affinity = fleet_agent_deployment_customization.value.override_affinity
+
       dynamic "append_tolerations" {
         for_each = var.agent_tolerations
         content {
@@ -116,6 +131,16 @@ resource "rancher2_cluster_v2" "this" {
           operator = append_tolerations.value.operator
           value    = append_tolerations.value.value
           effect   = append_tolerations.value.effect
+        }
+      }
+
+      dynamic "override_resource_requirements" {
+        for_each = fleet_agent_deployment_customization.value.resources == null ? [] : [fleet_agent_deployment_customization.value.resources]
+        content {
+          cpu_request    = override_resource_requirements.value.cpu_request
+          cpu_limit      = override_resource_requirements.value.cpu_limit
+          memory_request = override_resource_requirements.value.memory_request
+          memory_limit   = override_resource_requirements.value.memory_limit
         }
       }
     }
