@@ -1,0 +1,52 @@
+name: Release
+
+# On every push to main (i.e. every merged PR): CI, then multi-semantic-release
+# (dreitier/shared-ci-components/multi-semantic-release) as dreitier-release-bot. Every module is versioned on
+# its own: the Conventional Commits touching modules/<module>/ since its last tag decide its next version –
+# tag <module>@x.y.z, modules/<module>/CHANGELOG.md, GitHub release. Modules without such commits are left alone.
+# basement pins every module by its tag (config/modules.hcl there); its Renovate opens the bump PRs.
+on:
+  push:
+    branches:
+      - main
+  # re-run a release attempt manually
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# never run two releases at the same time, and never cancel one halfway
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    name: Versions & GitHub releases
+    needs: ci
+    runs-on: ubuntu-latest
+    # all writes use the GitHub App token (release bot), which may bypass the ruleset of main
+    permissions:
+      contents: read
+    steps:
+      - name: Run multi-semantic-release
+        id: release
+        uses: dreitier/shared-ci-components/multi-semantic-release@486b3fed3ce26e365ef8de6a17cde2ad86b4e269 # v1.3.0
+        with:
+          app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Summary
+        env:
+          TAGS: ${{ steps.release.outputs.tags }}
+        run: |
+          {
+            echo "### Released modules"
+            if [ -n "${TAGS}" ]; then for t in ${TAGS}; do echo "- \`${t}\`"; done; else echo "nothing"; fi
+          } >> "$GITHUB_STEP_SUMMARY"

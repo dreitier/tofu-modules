@@ -1,0 +1,168 @@
+#cloud-config
+# Rancher server first boot. No public interface.
+# Egress: a server without public IP reaches the Internet via Hetzner's network router → gateway (NAT).
+# The default route is set by a systemd unit (every boot) – not in bootcmd, the private interface gets its
+# address too late on the first boot (cloud-init's metadata fetch fails without a route); packages are
+# installed in runcmd after the route instead of by cloud-init's package module (that runs earlier).
+write_files:
+  - path: /usr/local/sbin/default-route
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # Egress for servers without public IP: default route via Hetzner's network router -> gateway (NAT), DNS
+      # via the gateway. Without a public interface the first boot falls back to a network config without DNS
+      # servers. Runs every boot (default-route.service).
+      for i in $(seq 1 120); do
+        dev=$(ip -o -4 addr show scope global | awk '{print $2; exit}')
+        if [ -n "$dev" ] && ip route replace default via ${router_ip} dev "$dev" onlink; then
+          # Resolver: dnsmasq on the gateway (internal names, forwards everything else). NetworkManager must
+          # not rewrite resolv.conf (an NM reload empties it on these servers).
+          if [ ! -f /etc/NetworkManager/conf.d/90-dns-none.conf ]; then
+            printf '[main]\ndns=none\n' > /etc/NetworkManager/conf.d/90-dns-none.conf
+            systemctl reload NetworkManager 2>/dev/null || true
+          fi
+          printf 'nameserver ${resolver_ip}\n' > /etc/resolv.conf
+          exit 0
+        fi
+        sleep 1
+      done
+      echo "no default route via ${router_ip}" >&2
+      exit 1
+  - path: /etc/systemd/system/default-route.service
+    content: |
+      [Unit]
+      Description=Default route via the Hetzner network router (NAT gateway)
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/sbin/default-route
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /var/lib/rancher/k3s/server/manifests/cert-manager.yaml
+    content: |
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: cert-manager
+        namespace: kube-system
+      spec:
+        repo: https://charts.jetstack.io
+        chart: cert-manager
+        version: ${cert_manager_version}
+        targetNamespace: cert-manager
+        createNamespace: true
+        valuesContent: |
+          crds:
+            enabled: true
+  - path: /var/lib/rancher/k3s/server/manifests/rancher.yaml
+    content: |
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: rancher
+        namespace: kube-system
+      spec:
+        repo: https://releases.rancher.com/server-charts/stable
+        chart: rancher
+        version: ${rancher_version}
+        targetNamespace: cattle-system
+        createNamespace: true
+        valuesContent: |
+          hostname: ${hostname}
+          replicas: 1
+          # agent-tls-mode strict: cacerts from the Secret tls-ca (Let's Encrypt roots, docs/rancher-tls.md)
+          privateCA: true
+          ingress:
+            tls:
+              source: secret
+  # Let's Encrypt via DNS-01 (Route53 ACME zone). The Secret cert-manager/route53-credentials (IAM user
+  # prod-rancher-acme) is created by hand after the first boot – until then the ingress has no certificate.
+  - path: /var/lib/rancher/k3s/server/manifests/rancher-letsencrypt.yaml
+    content: |
+      ${indent(6, letsencrypt_manifest)}
+  - path: /var/lib/rancher/k3s/server/manifests/rancher-tls-ca.yaml
+    content: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: cattle-system
+      ---
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tls-ca
+        namespace: cattle-system
+      type: Opaque
+      stringData:
+        cacerts.pem: |
+          ${indent(10, cacerts_pem)}
+  # Bundled Traefik: keep the client IP (ServiceLB otherwise SNATs to the node; single node → no imbalance),
+  # JSON logs and scrape annotations for monitoring.
+  # user_data is ignored after creation: on the running VM place the same file by hand (docs/rancher-tls.md style).
+  - path: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    content: |
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChartConfig
+      metadata:
+        name: traefik
+        namespace: kube-system
+      spec:
+        valuesContent: |
+          service:
+            spec:
+              externalTrafficPolicy: Local
+          # JSON logs for Alloy (config/alloy/traefik-logs.alloy), access log without headers. k3s bundles
+          # Traefik chart 40.x: logs.general/logs.access (chart 42+ renamed them to log/accessLog; chart 40
+          # has no schema and silently ignores the new keys – check after k3s upgrades)
+          logs:
+            general:
+              format: json
+            access:
+              enabled: true
+              format: json
+              fields:
+                headers:
+                  defaultmode: drop
+          # Metrics via Alloy's annotation autodiscovery (kubernetes/rancher/monitoring); port pinned (chart
+          # default 9100) so it always matches the annotation
+          ports:
+            metrics:
+              port: 9100
+          # Finer latency buckets for the heatmaps of dashboard Traefik (chart default 0.1,0.3,1.2,5)
+          metrics:
+            prometheus:
+              buckets: "0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5,10,30"
+          deployment:
+            podAnnotations:
+              k8s.grafana.com/scrape: "true"
+              k8s.grafana.com/job: traefik
+              k8s.grafana.com/metrics.portNumber: "9100"
+  # Resolver for kubelet/CoreDNS pinned to the gateway's dnsmasq (*.intern.<domain>). Without it CoreDNS
+  # forwards to /etc/resolv.conf, which was found pointing at Hetzner's resolvers (185.12.64.1/2) instead of
+  # the gateway – internal names didn't resolve in pods (2026-11-18).
+  - path: /etc/rancher/k3s/resolv.conf
+    content: |
+      nameserver ${resolver_ip}
+  - path: /etc/rancher/k3s/config.yaml
+    content: |
+      resolv-conf: /etc/rancher/k3s/resolv.conf
+  - path: /etc/profile.d/k3s.sh
+    content: |
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now default-route.service
+  - dnf -y upgrade
+  - dnf -y install container-selinux bash-completion
+  - systemctl disable --now firewalld || true
+  # Download first: with `curl | sh` a failed download is an empty script and cloud-init reports success
+  - ${jsonencode("curl -sfL --retry 10 --retry-all-errors https://get.k3s.io -o /root/k3s-install.sh")}
+  - ${jsonencode("INSTALL_K3S_VERSION='${k3s_version}' sh /root/k3s-install.sh server --node-ip ${private_ip} --tls-san ${hostname} --tls-san ${private_ip} --write-kubeconfig-mode 0600")}
+  - /usr/local/bin/kubectl completion bash > /etc/bash_completion.d/kubectl.sh
+power_state:
+  mode: reboot
+  condition: test "$(grubby --default-kernel | sed 's|.*/vmlinuz-||')" != "$(uname -r)"

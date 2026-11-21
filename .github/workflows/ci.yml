@@ -1,0 +1,124 @@
+name: CI
+
+# Pull requests, weekly (new Trivy checks, provider releases) and as the first stage of the release workflow.
+on:
+  pull_request:
+  schedule:
+    - cron: '37 4 * * 1'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # tools of the opentofu hooks (tofu_fmt, tofu_tflint, tofu_trivy) – the hooks call them from PATH
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version_file: .tool-versions
+          tofu_wrapper: false
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.66.0
+
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.2
+          cache: true
+
+      # pre-commit version: .github/requirements-ci.txt (Renovate)
+      - name: Install pre-commit
+        run: pipx install "$(grep -E '^pre-commit==' .github/requirements-ci.txt)"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/pre-commit
+            ~/.tflint.d/plugins
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', '.tflint.hcl') }}
+
+      - name: tflint plugins
+        run: tflint --init --config="${GITHUB_WORKSPACE}/.tflint.hcl"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}   # rate limit of the plugin download
+
+      # no-commit-to-branch fails on main by design (release workflow) – it only guards local commits
+      - name: pre-commit
+        env:
+          SKIP: no-commit-to-branch
+        run: pre-commit run --all-files --show-diff-on-failure --color=always
+
+  # tofu init (no backend) + validate per module, tofu test where a module has tests/*.tftest.hcl.
+  # Pull requests: only the modules they change; otherwise all of them.
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    env:
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.tofu-plugins
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version_file: .tool-versions
+          tofu_wrapper: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .tofu-plugins
+          key: tofu-plugins-${{ runner.os }}-${{ hashFiles('modules/*/versions.tf') }}
+          restore-keys: tofu-plugins-${{ runner.os }}-
+
+      - name: Modules to check
+        id: modules
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "${EVENT}" = pull_request ]; then
+            modules=$(git diff --name-only --diff-filter=d "${BASE_SHA}...HEAD" -- modules/ | cut -d/ -f2 | sort -u)
+          else
+            modules=$(find modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+          fi
+          # only directories that still exist (a PR may delete a module)
+          modules=$(for m in ${modules}; do [ -d "modules/${m}" ] && echo "${m}"; done | xargs)
+          echo "list=${modules}" >> "$GITHUB_OUTPUT"
+          echo "modules: ${modules:-none}"
+
+      - name: tofu init / validate / test
+        if: steps.modules.outputs.list != ''
+        env:
+          MODULES: ${{ steps.modules.outputs.list }}
+        run: |
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          failed=()
+          for m in ${MODULES}; do
+            echo "::group::${m}"
+            if ! (cd "modules/${m}" \
+                  && tofu init -backend=false -input=false -no-color \
+                  && tofu validate -no-color \
+                  && { ! compgen -G 'tests/*.tftest.hcl' >/dev/null || tofu test -no-color; }); then
+              failed+=("${m}")
+            fi
+            echo "::endgroup::"
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::failed: ${failed[*]}"
+            exit 1
+          fi

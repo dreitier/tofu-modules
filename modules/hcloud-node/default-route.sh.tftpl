@@ -1,0 +1,20 @@
+#!/bin/sh
+# Egress for servers without public IP: default route via Hetzner's network router -> gateway (NAT), DNS
+# via the gateway. Without a public interface the first boot falls back to a network config without DNS
+# servers. Runs every boot (default-route.service).
+for i in $(seq 1 120); do
+  dev=$(ip -o -4 addr show scope global | awk '{print $2; exit}')
+  if [ -n "$dev" ] && ip route replace default via ${router_ip} dev "$dev" onlink; then
+    # Resolver: dnsmasq on the gateway (internal names, forwards everything else). NetworkManager must
+    # not rewrite resolv.conf (an NM reload empties it on these servers).
+    if [ ! -f /etc/NetworkManager/conf.d/90-dns-none.conf ]; then
+      printf '[main]\ndns=none\n' > /etc/NetworkManager/conf.d/90-dns-none.conf
+      systemctl reload NetworkManager 2>/dev/null || true
+    fi
+    printf 'nameserver ${resolver_ip}\n' > /etc/resolv.conf
+    exit 0
+  fi
+  sleep 1
+done
+echo "no default route via ${router_ip}" >&2
+exit 1

@@ -1,0 +1,49 @@
+// etcd metrics: RKE2 serves them on 127.0.0.1:2381 (etcd-expose-metrics=false keeps them off the network).
+// alloy-logs runs with hostNetwork on every node, so the pod on an etcd node scrapes its local etcd.
+// Discovery finds the etcd static pod on this node only – other nodes get no target (no up=0 noise).
+discovery.kubernetes "etcd" {
+  role = "pod"
+
+  namespaces {
+    names = ["kube-system"]
+  }
+
+  selectors {
+    role  = "pod"
+    label = "component=etcd"
+    field = "spec.nodeName=" + sys.env("NODE_NAME")
+  }
+}
+
+discovery.relabel "etcd" {
+  targets = discovery.kubernetes.etcd.targets
+
+  // One target per pod (the static pod declares no ports; skip init containers)
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_init"]
+    regex         = "true"
+    action        = "drop"
+  }
+
+  rule {
+    target_label = "__address__"
+    replacement  = "127.0.0.1:2381"
+  }
+
+  rule {
+    target_label = "instance"
+    replacement  = sys.env("NODE_NAME")
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "etcd"
+  }
+}
+
+prometheus.scrape "etcd" {
+  targets         = discovery.relabel.etcd.output
+  job_name        = "etcd"
+  scrape_interval = "30s"
+  forward_to      = [prometheus.remote_write.prometheus.receiver]
+}

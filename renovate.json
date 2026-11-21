@@ -1,0 +1,114 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "tofu-modules: OpenTofu providers (versions.tf), versions marked with # renovate: comments, GitHub Actions, pre-commit hooks, CI tools. PR titles decide the module releases: fix(deps) → patch release of every module the PR touches, ci(deps) → none.",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "Europe/Berlin",
+  "labels": [
+    "dependencies"
+  ],
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 0,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": [
+      "security"
+    ],
+    "schedule": [
+      "at any time"
+    ]
+  },
+  "pre-commit": {
+    "enabled": true
+  },
+  "pip_requirements": {
+    "managerFilePatterns": [
+      "/(^|/)requirements-ci\\.txt$/"
+    ]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Versions marked with a comment on the line above: # renovate: datasource=<ds> depName=<name> [registryUrl=<url>] [versioning=<v>] (same convention as basement)",
+      "managerFilePatterns": [
+        "/\\.(tf|hcl)$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+registryUrl=(?<registryUrl>\\S+))?(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*[\\w.]+\\s*=\\s*\"(?:[^\":]+:)?(?<currentValue>[^\"@]+)\""
+      ],
+      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}{{#if (equals datasource \"docker\")}}docker{{else}}semver-coerced{{/if}}{{/if}}"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Providers come from the OpenTofu registry",
+      "matchDatasources": [
+        "terraform-provider"
+      ],
+      "registryUrls": [
+        "https://registry.opentofu.org"
+      ]
+    },
+    {
+      "description": "Everything inside a module → fix(deps): patch release of the modules the PR touches",
+      "matchFileNames": [
+        "modules/**"
+      ],
+      "semanticCommitType": "fix",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Providers: minor/patch together",
+      "matchManagers": [
+        "terraform"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "OpenTofu providers (minor/patch)"
+    },
+    {
+      "description": "Major updates need a look at the changelog/upgrade notes",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "addLabels": [
+        "major"
+      ]
+    },
+    {
+      "description": "Pipeline and tooling → ci(deps): no release",
+      "matchManagers": [
+        "github-actions",
+        "pre-commit",
+        "pip_requirements",
+        "asdf"
+      ],
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "GitHub Actions: one PR",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "OpenTofu of the CI (.tool-versions): same minor as basement's tofu_version_constraint and the workstations (1.12) – raise together",
+      "matchDepNames": [
+        "opentofu"
+      ],
+      "allowedVersions": "<1.13",
+      "addLabels": [
+        "workstation-first"
+      ]
+    }
+  ]
+}

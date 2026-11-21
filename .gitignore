@@ -1,0 +1,13 @@
+# OpenTofu
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+node_modules/

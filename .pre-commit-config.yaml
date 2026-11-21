@@ -1,0 +1,55 @@
+# Local checks before each commit; the CI lint job runs the same hooks (pre-commit version:
+# .github/requirements-ci.txt). Setup once per clone: `pre-commit install`. All files: `pre-commit run -a`.
+# The fixers (tofu fmt, terraform-docs, whitespace) rewrite files in place: review with git diff, git add, commit
+# again.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-json
+      - id: check-yaml
+        exclude: \.tftpl$
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: detect-aws-credentials
+        args: [--allow-missing-credentials]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  # README.md per module: inputs/outputs between the BEGIN_TF_DOCS/END_TF_DOCS markers (.terraform-docs.yml)
+  - repo: https://github.com/terraform-docs/terraform-docs
+    rev: v0.25.1
+    hooks:
+      - id: terraform-docs-go
+        always_run: true
+        args: [--config=.terraform-docs.yml, ./]
+
+  - repo: https://github.com/tofuutils/pre-commit-opentofu
+    rev: v2.4.2
+    hooks:
+      - id: tofu_fmt
+      - id: tofu_tflint
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+      - id: tofu_trivy
+        args:
+          - >
+            --args=--skip-dirs="**/.terraform"
+            --severity CRITICAL
+            --report summary
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/renovatebot/pre-commit-hooks
+    rev: 44.248.1
+    hooks:
+      - id: renovate-config-validator
+        files: renovate.json

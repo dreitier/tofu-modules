@@ -1,0 +1,14 @@
+name: PR title
+
+# PRs are squash-merged and the PR title becomes the commit message on main, which multi-semantic-release
+# uses to determine the next version of every module the PR touches.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    uses: dreitier/shared-ci-components/.github/workflows/conventional-pr-title.yml@1ba590342248df7855a136be3420378586d139d6 # v1.2.0

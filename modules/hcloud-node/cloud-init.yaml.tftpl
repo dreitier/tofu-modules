@@ -1,0 +1,24 @@
+#cloud-config
+# Node first boot. No public interface: the default route goes to Hetzner's network router, which
+# forwards to the gateway (network route 0.0.0.0/0).
+# Egress: a server without public IP reaches the Internet via Hetzner's network router → gateway (NAT).
+# The default route is set by a systemd unit (every boot) – not in bootcmd, the private interface gets its
+# address too late on the first boot (cloud-init's metadata fetch fails without a route); packages are
+# installed in runcmd after the route instead of by cloud-init's package module (that runs earlier).
+write_files: ${jsonencode(write_files)}
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now default-route.service
+  - dnf -y upgrade
+%{ if length(packages) > 0 ~}
+  - ${jsonencode("dnf -y install ${join(" ", packages)}")}
+%{ endif ~}
+%{ for c in base_runcmd ~}
+  - ${jsonencode(c)}
+%{ endfor ~}
+  - ${jsonencode("${node_command} --address ${private_ip} --internal-address ${private_ip} ${join(" ", [for r in roles : "--${r}"])}")}
+power_state:
+  # Reboot if the package upgrade installed a newer kernel (tg-env lesson: the cloud image only ships the
+  # modules of its own kernel); rancher-system-agent resumes the registration after the reboot
+  mode: reboot
+  condition: test "$(grubby --default-kernel | sed 's|.*/vmlinuz-||')" != "$(uname -r)"

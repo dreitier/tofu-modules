@@ -1,0 +1,87 @@
+# promtool test rules modules/monitoring/manifests/rules/tests/verschreibomat_test.yml
+# (outside rules/*.yml, so it isn't deployed as PrometheusRule)
+rule_files:
+  - ../dreitier.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{namespace="verschreibomat", job="verschreibomat"}'
+        values: '1x5 0x10'
+      - series: 'http_server_requests_seconds_count{namespace="verschreibomat", outcome="SUCCESS", uri="/"}'
+        values: '0+10x30'
+      - series: 'http_server_requests_seconds_count{namespace="verschreibomat", outcome="SERVER_ERROR", uri="/projects"}'
+        values: '0x10 1x20'
+      - series: 'http_client_requests_seconds_count{namespace="verschreibomat", outcome="CLIENT_ERROR", status="401", uri="/api/v1/session"}'
+        values: '0+1x30'
+      - series: 'http_client_requests_seconds_count{namespace="verschreibomat", outcome="UNKNOWN", status="CLIENT_ERROR", uri="/api/v1/activities"}'
+        values: '0x20 2x10'
+      - series: 'logback_events_total{namespace="verschreibomat", level="error"}'
+        values: '0x30'
+      - series: 'logback_events_total{namespace="verschreibomat", level="warn"}'
+        values: '0+1x30'
+      - series: 'hikaricp_connections_pending{namespace="verschreibomat", pool="HikariPool-1"}'
+        values: '0x10 2x10'
+      - series: 'hikaricp_connections_timeout_total{namespace="verschreibomat", pool="HikariPool-1"}'
+        values: '0x30'
+      - series: 'jvm_memory_usage_after_gc{namespace="verschreibomat", area="heap", pool="long-lived"}'
+        values: '0.5x10 0.95x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: VerschreibomatDown
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: VerschreibomatDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "verschreibomat is down"
+              description: "No successful scrape of the application for 5 minutes – kubectl -n verschreibomat get pods,events. docs/verschreibomat.md"
+      - eval_time: 5m
+        alertname: VerschreibomatServerErrors
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: VerschreibomatServerErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "verschreibomat answered 1 requests with 5xx in 15 minutes"
+              description: "kubectl -n verschreibomat logs deploy/verschreibomat | grep ERROR; dashboard verschreibomat"
+      # 401 (rejected API key) alone is no alert
+      - eval_time: 15m
+        alertname: VerschreibomatMocoErrors
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: VerschreibomatMocoErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "2 failed requests to Moco in 15 minutes"
+              description: "Moco down, DNS/egress of the pod or a timeout – dashboard verschreibomat, panel Moco API"
+      - eval_time: 25m
+        alertname: VerschreibomatErrorLogs
+        exp_alerts: []
+      - eval_time: 18m
+        alertname: VerschreibomatDatabasePoolExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "verschreibomat waits for database connections"
+              description: "Requests wait for a connection of the pool (or time out) – slow queries or PostgreSQL db/pg unavailable."
+      - eval_time: 20m
+        alertname: VerschreibomatHeapNearlyFull
+        exp_alerts: []
+      - eval_time: 27m
+        alertname: VerschreibomatHeapNearlyFull
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "verschreibomat heap 95% full after GC"
+              description: "Raise resources.limits.memory of apps/verschreibomat (heap = 75 % of it) or look for a leak."

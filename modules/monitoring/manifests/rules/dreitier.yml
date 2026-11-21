@@ -1,0 +1,129 @@
+groups:
+  - name: blackbox
+    rules:
+      - alert: BlackboxProbeFailed
+        expr: probe_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Endpoint {{ $labels.instance }} is down"
+          description: "Blackbox probe ({{ $labels.job }}) failed for 5 minutes."
+      - alert: CertificateExpiresSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 14 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Certificate of {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
+          description: "cert-manager should have renewed it 30 days before expiry – check the Certificate/Order."
+  - name: backups
+    rules:
+      # OpenBao Raft snapshot CronJob (security/openbao): failures are covered by KubeJobFailed; this catches
+      # a CronJob that stopped running at all
+      - alert: OpenBaoSnapshotMissing
+        expr: time() - max(kube_cronjob_status_last_successful_time{namespace="openbao", cronjob="openbao-snapshot"}) > 13 * 3600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No successful OpenBao snapshot for {{ $value | humanizeDuration }}"
+          description: "CronJob openbao/openbao-snapshot runs every 6 h. docs/handbook/runbooks/openbao.md"
+  - name: openbao
+    rules:
+      # The chart's ServiceMonitor scrapes the active node only (service openbao-active). No target = no active
+      # node (sealed, lost quorum) – the blackbox probe of /v1/sys/health fires as well.
+      - alert: OpenBaoNoActiveNode
+        expr: absent(up{namespace="openbao", service="openbao-active"} == 1)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active OpenBao node answers metrics"
+          description: "Sealed or no Raft leader – ESO can't sync secrets. docs/handbook/runbooks/openbao.md"
+      # Autopilot on the active node: a standby is sealed, unreachable or lagging behind (OpenBao keeps the vault_
+      # metric prefix, checked 2026-11-17)
+      - alert: OpenBaoRaftUnhealthy
+        expr: max(vault_autopilot_healthy{namespace="openbao"}) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OpenBao Raft cluster unhealthy (autopilot)"
+          description: "A standby is sealed, down or not in sync – bao operator raft autopilot state. docs/handbook/runbooks/openbao.md"
+  - name: postgresql
+    rules:
+      # Barman Cloud plugin (data/postgresql, daily base backup 22:00): age of the last successful backup, from the
+      # instance metrics (PodMonitor of data/postgresql sets cnpg_cluster); 0 = never.
+      - alert: PostgresBackupTooOld
+        expr: |
+          time() - max by (cluster, namespace, cnpg_cluster) (
+            barman_cloud_cloudnative_pg_io_last_available_backup_timestamp > 0
+          ) > 26 * 3600
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Last PostgreSQL backup of {{ $labels.namespace }}/{{ $labels.cnpg_cluster }} is {{ $value | humanizeDuration }} old"
+          description: "ScheduledBackup runs daily – check kubectl get backups -n {{ $labels.namespace }}. docs/handbook/runbooks/postgresql.md"
+      - alert: PostgresBackupMetricMissing
+        expr: absent(barman_cloud_cloudnative_pg_io_last_available_backup_timestamp > 0)
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "No PostgreSQL backup timestamp metric"
+          description: "PodMonitor of data/postgresql off, the plugin's metric renamed, or no backup ever – PostgresBackupTooOld can't fire."
+  - name: verschreibomat
+    rules:
+      # ServiceMonitor of apps/verschreibomat (management port 8081). No target or a failing scrape = pod down,
+      # crash-looping or the management port not answering; the blackbox probe of the ingress fires as well.
+      - alert: VerschreibomatDown
+        expr: absent(up{namespace="verschreibomat", job="verschreibomat"} == 1)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "verschreibomat is down"
+          description: "No successful scrape of the application for 5 minutes – kubectl -n verschreibomat get pods,events. docs/verschreibomat.md"
+      # Few requests: every 5xx is worth a look
+      - alert: VerschreibomatServerErrors
+        expr: sum(increase(http_server_requests_seconds_count{namespace="verschreibomat", outcome="SERVER_ERROR"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "verschreibomat answered {{ $value | humanize }} requests with 5xx in 15 minutes"
+          description: "kubectl -n verschreibomat logs deploy/verschreibomat | grep ERROR; dashboard verschreibomat"
+      # Moco unreachable or failing: server errors and I/O errors (outcome UNKNOWN). 401/403 are rejected API keys
+      # of single users and not an alert.
+      - alert: VerschreibomatMocoErrors
+        expr: sum(increase(http_client_requests_seconds_count{namespace="verschreibomat", outcome=~"SERVER_ERROR|UNKNOWN"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanize }} failed requests to Moco in 15 minutes"
+          description: "Moco down, DNS/egress of the pod or a timeout – dashboard verschreibomat, panel Moco API"
+      - alert: VerschreibomatErrorLogs
+        expr: sum(increase(logback_events_total{namespace="verschreibomat", level="error"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "verschreibomat logged {{ $value | humanize }} errors in 15 minutes"
+          description: "Loki: {namespace=\"verschreibomat\"} |= \"ERROR\""
+      - alert: VerschreibomatDatabasePoolExhausted
+        expr: max(hikaricp_connections_pending{namespace="verschreibomat"}) > 0 or sum(increase(hikaricp_connections_timeout_total{namespace="verschreibomat"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "verschreibomat waits for database connections"
+          description: "Requests wait for a connection of the pool (or time out) – slow queries or PostgreSQL db/pg unavailable."
+      # Long-lived heap after GC: what's left once the GC ran; near the limit → OOM kill (memory limit 768Mi)
+      - alert: VerschreibomatHeapNearlyFull
+        expr: max(jvm_memory_usage_after_gc{namespace="verschreibomat", area="heap", pool="long-lived"}) > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "verschreibomat heap {{ $value | humanizePercentage }} full after GC"
+          description: "Raise resources.limits.memory of apps/verschreibomat (heap = 75 % of it) or look for a leak."

@@ -1,0 +1,10 @@
+# HTTPS endpoint must answer 2xx with a valid (publicly trusted) certificate
+https_2xx:
+  prober: http
+  timeout: 15s
+  http:
+    preferred_ip_protocol: ip4
+    ip_protocol_fallback: false
+    valid_status_codes: []
+    fail_if_not_ssl: true
+    follow_redirects: true

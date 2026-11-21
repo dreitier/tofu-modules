@@ -1,0 +1,12 @@
+[Unit]
+Description=Default route via the Hetzner network router (NAT gateway)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/default-route
+
+[Install]
+WantedBy=multi-user.target

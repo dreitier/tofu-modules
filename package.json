@@ -1,0 +1,8 @@
+{
+  "name": "tofu-modules",
+  "private": true,
+  "description": "npm workspaces only for multi-semantic-release (one version per module, tags <module>@x.y.z) – nothing is installed or published",
+  "workspaces": [
+    "modules/*"
+  ]
+}

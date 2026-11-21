@@ -1,0 +1,77 @@
+#cloud-config
+# Gateway first boot: forwarding + NAT for the private network, WireGuard break-glass interface, DNS for
+# VPN clients (dnsmasq on wg0 only).
+# TODO peers: add [Peer] sections to /etc/wireguard/wg0.conf by hand (or Ansible) and activate them with
+#   wg set wg0 peer <client public key> allowed-ips <client IP>/32
+# Never `wg syncconf`/`setconf` from wg0.conf: the private key is set by PostUp and not in the file, so
+# they would remove it. Public key of the server: /root/wg0.pub. Client config: DNS = ${cidrhost(vpn_range, 1)},
+# AllowedIPs = ${network_range}, ${vpn_range}.
+package_update: true
+packages:
+  - wireguard-tools
+  - nftables
+  - dnsmasq
+  - coturn
+  - gpg
+  - curl
+write_files:
+  - path: /etc/dnsmasq.d/vpn.conf
+    content: |
+      # VPN clients (wg0, created later by wg-quick → bind-dynamic), the servers of the private network and
+      # the gateway itself: Debian's dnsmasq registers 127.0.0.1 in resolv.conf via resolvconf
+      listen-address=127.0.0.1,${cidrhost(vpn_range, 1)},${private_ip}
+      bind-dynamic
+      no-hosts
+      domain-needed
+      # Nothing behind the gateway has IPv6 (servers without public IP): answer A only, no AAAA
+      filter-AAAA
+%{ for domain, ip in dns_records ~}
+      address=/${domain}/${ip}
+%{ endfor ~}
+  # STUN for NetBird clients (docs/netbird.md) – STUN only, no TURN/relay, no TLS
+  - path: /etc/turnserver.conf
+    content: |
+      listening-port=3478
+      stun-only
+      fingerprint
+      no-cli
+      no-tls
+      no-dtls
+      syslog
+  # NetBird client = routing peer for the private network; enrolled by hand with a setup key
+  # (docs/netbird.md runbook), WireGuard port ${netbird_port} (wg0 keeps the break-glass port)
+  - path: /etc/apt/sources.list.d/netbird.list
+    content: |
+      deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main
+  - path: /etc/sysctl.d/90-forward.conf
+    content: |
+      net.ipv4.ip_forward = 1
+  - path: /etc/nftables.conf
+    permissions: "0600"
+    content: |
+      flush ruleset
+      table ip nat {
+        chain postrouting {
+          type nat hook postrouting priority srcnat;
+          ip saddr ${network_range} oifname != "wg0" masquerade
+          ip saddr ${vpn_range} ip daddr != ${network_range} masquerade
+        }
+      }
+runcmd:
+  - sysctl --system
+  - systemctl enable --now nftables
+  - umask 077 && wg genkey | tee /etc/wireguard/wg0.key | wg pubkey > /root/wg0.pub
+  - |
+    cat > /etc/wireguard/wg0.conf <<EOF
+    [Interface]
+    Address = ${cidrhost(vpn_range, 1)}/${split("/", vpn_range)[1]}
+    ListenPort = ${wireguard_port}
+    PostUp = wg set %i private-key /etc/wireguard/wg0.key
+    EOF
+  - systemctl enable --now wg-quick@wg0
+  - systemctl enable dnsmasq && systemctl restart dnsmasq
+  # Key to a file first (never curl | sh), then the package from the signed repository
+  - curl -fsSL --retry 5 -o /root/netbird-public.key https://pkgs.netbird.io/debian/public.key
+  - gpg --dearmor --yes -o /usr/share/keyrings/netbird-archive-keyring.gpg /root/netbird-public.key
+  - apt-get update && apt-get install -y netbird
+  - systemctl enable coturn && systemctl restart coturn
