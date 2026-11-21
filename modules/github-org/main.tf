@@ -59,7 +59,9 @@ resource "github_team" "child" {
 }
 
 locals {
-  teams = merge(github_team.this, github_team.child)
+  # Only the attributes used here and in the outputs – the whole resource objects would carry the deprecated
+  # create_default_maintainer along ("Value derived from a deprecated source" on every plan)
+  teams = { for k, t in merge(github_team.this, github_team.child) : k => { id = t.id, slug = t.slug } }
 }
 
 # Team membership from Entra groups (needs GitHub Enterprise Cloud with team sync enabled)
