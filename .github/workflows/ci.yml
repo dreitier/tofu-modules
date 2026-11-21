@@ -24,7 +24,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # tools of the opentofu hooks (tofu_fmt, tofu_tflint, tofu_trivy) – the hooks call them from PATH
+      # tools of the opentofu hooks (tofu_fmt, tofu_tflint) – the hooks call them from PATH. tofu_trivy runs
+      # from the Trivy image below instead
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
           tofu_version_file: .tool-versions
@@ -33,11 +34,6 @@ jobs:
       - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
         with:
           tflint_version: v0.66.0
-
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.76.2
-          cache: true
 
       # pre-commit version: .github/requirements-ci.txt (Renovate)
       - name: Install pre-commit
@@ -55,11 +51,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}   # rate limit of the plugin download
 
-      # no-commit-to-branch fails on main by design (release workflow) – it only guards local commits
+      # no-commit-to-branch fails on main by design (release workflow) – it only guards local commits;
+      # tofu_trivy: next step
       - name: pre-commit
         env:
-          SKIP: no-commit-to-branch
+          SKIP: no-commit-to-branch,tofu_trivy
         run: pre-commit run --all-files --show-diff-on-failure --color=always
+
+      # Same check as the local tofu_trivy hook, from the official image pinned by digest. Not
+      # aquasecurity/setup-trivy: Renovate can't look up aquasecurity's repositories (github-tags/-releases
+      # "no-result"), so neither the action nor the Trivy version would ever be updated – the image goes
+      # through the docker datasource (ghcr.io).
+      - name: Trivy (misconfigurations, CRITICAL)
+        if: ${{ !cancelled() }}
+        uses: docker://ghcr.io/aquasecurity/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+        with:
+          args: config --skip-dirs **/.terraform --severity CRITICAL --exit-code 1 modules
 
   # tofu init (no backend) + validate per module, tofu test where a module has tests/*.tftest.hcl.
   # Pull requests: only the modules they change; otherwise all of them.
