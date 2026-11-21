@@ -1,4 +1,15 @@
 locals {
+  # One deployment customization block per agent when tolerations or an override are set; the override's
+  # attributes are null when only tolerations are given (unchanged output for tolerations-only callers)
+  cluster_agent_customization = var.cluster_agent_customization == null && length(var.agent_tolerations) == 0 ? [] : [{
+    override_affinity = try(var.cluster_agent_customization.override_affinity, null)
+    resources         = try(var.cluster_agent_customization.resources, null)
+  }]
+  fleet_agent_customization = var.fleet_agent_customization == null && length(var.agent_tolerations) == 0 ? [] : [{
+    override_affinity = try(var.fleet_agent_customization.override_affinity, null)
+    resources         = try(var.fleet_agent_customization.resources, null)
+  }]
+
   rancher_token = sensitive(jsondecode(data.http.rancher_login.response_body).token)
 
   # etcd S3 credential: ID of the managed cloud credential wins over a fixed name. Its keys are not
