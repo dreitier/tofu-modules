@@ -88,6 +88,8 @@ resource "helm_release" "this" {
       # Mitigation for the Base64 intrinsic JIT bug (java2shell). JAVA_OPTS_APPEND, not JAVA_OPTS:
       # kc.sh replaces its default JVM options (heap sizing, --add-opens) when JAVA_OPTS is set.
       { name = "JAVA_OPTS_APPEND", value = "-XX:-UseBASE64Intrinsics" },
+      # JSON logs on stdout (Quarkus default JSON format), parsed by Alloy (basement config/alloy/workload-logs.alloy)
+      { name = "KC_LOG_CONSOLE_OUTPUT", value = "json" },
     ])
 
     # Extensions (var.extra_providers): downloaded by an init container into an emptyDir at

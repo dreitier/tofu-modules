@@ -37,6 +37,10 @@ resource "helm_release" "this" {
       }
     }
 
+    # JSON logs (all controllers) instead of the coloured console format, parsed by Alloy
+    # (basement config/alloy/workload-logs.alloy)
+    features = { logging = { format = "json" } }
+
     admissionController = {
       # 2 replicas, preferred anti-affinity (chart default) – only 2 workers; >1 replica enables the PDB
       replicas       = var.admission_replicas

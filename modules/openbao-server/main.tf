@@ -191,6 +191,8 @@ resource "helm_release" "this" {
       configAnnotation = true
       dataStorage      = { enabled = true, size = var.storage_size, storageClass = var.storage_class }
       resources        = var.resources
+      # JSON logs (BAO_LOG_FORMAT), parsed by Alloy (basement config/alloy/workload-logs.alloy)
+      logFormat = "json"
 
       extraEnvironmentVars = {
         AWS_ROLE_ARN                = var.irsa_role_arn

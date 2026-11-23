@@ -62,10 +62,15 @@ resource "helm_release" "this" {
 
     metrics = { enabled = true }
 
+    # JSON logs (core, UI, Kyverno plugin), parsed by Alloy (basement config/alloy/workload-logs.alloy).
+    # client-go warnings stay klog text.
+    logging = { encoding = "json" }
+
     ui = {
       enabled     = true
       resources   = var.resources.ui
       displayMode = "dark"
+      logging     = { encoding = "json" }
 
       openIDConnect = {
         enabled     = true
@@ -88,6 +93,7 @@ resource "helm_release" "this" {
       kyverno = {
         enabled   = true
         resources = var.resources.kyverno_plugin
+        logging   = { encoding = "json" }
       }
     }
 
