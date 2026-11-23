@@ -61,6 +61,17 @@ variable "app_namespaces" {
   description = "Namespaces of the automated apps (they must exist – created by the apps' first manual apply)"
 }
 
+variable "helm_app_namespaces" {
+  type        = list(string)
+  default     = []
+  description = "Subset of app_namespaces whose app is a Helm release: additionally Secrets (Helm release storage), service accounts and PrometheusRules – only for namespaces that hold no credentials"
+
+  validation {
+    condition     = length(setsubtract(var.helm_app_namespaces, var.app_namespaces)) == 0
+    error_message = "helm_app_namespaces must be a subset of app_namespaces."
+  }
+}
+
 variable "runner_resources" {
   type    = any
   default = { requests = { cpu = "100m", memory = "512Mi" }, limits = { memory = "2Gi" } }

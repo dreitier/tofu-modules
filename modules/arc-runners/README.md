@@ -5,6 +5,10 @@ Runner scale sets of dreitier/basement for the OpenTofu deployments of our own a
   basement-plan   service account tofu-apps-plan:  read-only on the app namespaces
   basement-apply  service account tofu-apps-apply: role tofu-app in the app namespaces
 ```
+Apps installed with Helm (helm_app_namespaces, e.g. backmon) additionally get the role tofu-app-helm in their
+namespace: Secrets (Helm stores its release there, the plan reads it), service accounts, PrometheusRules. Only
+for namespaces without credentials – whoever may read a namespace's Secrets or run pods as its service
+accounts has everything those can reach.
 The Kubernetes rights belong to the runner pod's service account (the provider's in-cluster config); AWS
 (state, passphrase) comes from GitHub OIDC (aws/github-actions). Jobs run directly in the runner image
 (ghcr.io/dreitier/actions-runner-tofu) – no container mode, no Docker, Pod Security "restricted".
@@ -21,6 +25,7 @@ GitHub App (installed on basement only): OpenBao <github_app_kv_name> (app_id, i
 | <a name="input_controller_service_account"></a> [controller\_service\_account](#input\_controller\_service\_account) | Service account of the controller (output of platform/arc-controller) | <pre>object({<br/>    namespace = string<br/>    name      = string<br/>  })</pre> | n/a | yes |
 | <a name="input_github_app_kv_name"></a> [github\_app\_kv\_name](#input\_github\_app\_kv\_name) | OpenBao entry of the ARC GitHub App (app\_id, installation\_id, private\_key) | `string` | `"k8s/prod/arc-github-app"` | no |
 | <a name="input_github_config_url"></a> [github\_config\_url](#input\_github\_config\_url) | Repository whose workflows the runners serve | `string` | n/a | yes |
+| <a name="input_helm_app_namespaces"></a> [helm\_app\_namespaces](#input\_helm\_app\_namespaces) | Subset of app\_namespaces whose app is a Helm release: additionally Secrets (Helm release storage), service accounts and PrometheusRules – only for namespaces that hold no credentials | `list(string)` | `[]` | no |
 | <a name="input_kube_config"></a> [kube\_config](#input\_kube\_config) | Kubeconfig of the cluster (output kube\_config of the cluster unit) | `string` | n/a | yes |
 | <a name="input_namespace"></a> [namespace](#input\_namespace) | Namespace of the scale sets (output runners\_namespace of platform/arc-controller) | `string` | n/a | yes |
 | <a name="input_runner_image"></a> [runner\_image](#input\_runner\_image) | Runner image (ghcr.io/dreitier/actions-runner-tofu) | `string` | n/a | yes |
