@@ -42,6 +42,10 @@ locals {
         allow_structured_metadata = true
         ingestion_rate_mb         = 10
         ingestion_burst_size_mb   = 25
+        # Lines over max_line_size (default 256KB, e.g. JSON logs with long stack traces) are truncated instead of
+        # being dropped as a whole (loki_discarded_samples_total{reason="line_too_long"})
+        max_line_size          = "256KB"
+        max_line_size_truncate = true
       }
 
       compactor = {
