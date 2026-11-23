@@ -1,6 +1,10 @@
 # Runner scale sets of dreitier/basement for the OpenTofu deployments of our own apps (docs/ci-deploy.md):
 #   basement-plan   service account tofu-apps-plan:  read-only on the app namespaces
 #   basement-apply  service account tofu-apps-apply: role tofu-app in the app namespaces
+# Apps installed with Helm (helm_app_namespaces, e.g. backmon) additionally get the role tofu-app-helm in their
+# namespace: Secrets (Helm stores its release there, the plan reads it), service accounts, PrometheusRules. Only
+# for namespaces without credentials – whoever may read a namespace's Secrets or run pods as its service
+# accounts has everything those can reach.
 # The Kubernetes rights belong to the runner pod's service account (the provider's in-cluster config); AWS
 # (state, passphrase) comes from GitHub OIDC (aws/github-actions). Jobs run directly in the runner image
 # (ghcr.io/dreitier/actions-runner-tofu) – no container mode, no Docker, Pod Security "restricted".
@@ -18,6 +22,11 @@ locals {
     { api_groups = ["external-secrets.io"], resources = ["externalsecrets"] },
     { api_groups = ["monitoring.coreos.com"], resources = ["servicemonitors"] },
   ]
+  # additionally for apps installed with Helm: release storage + what their charts create
+  helm_rules = [
+    { api_groups = [""], resources = ["secrets", "serviceaccounts"] },
+    { api_groups = ["monitoring.coreos.com"], resources = ["prometheusrules"] },
+  ]
   verbs = {
     plan  = ["get", "list", "watch"]
     apply = ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -32,6 +41,9 @@ locals {
 
   bindings = merge([
     for k in keys(local.scale_sets) : { for ns in var.app_namespaces : "${k}/${ns}" => { kind = k, namespace = ns } }
+  ]...)
+  helm_bindings = merge([
+    for k in keys(local.scale_sets) : { for ns in var.helm_app_namespaces : "${k}/${ns}" => { kind = k, namespace = ns } }
   ]...)
 }
 
@@ -100,6 +112,42 @@ resource "kubernetes_role_binding_v1" "app" {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
     name      = kubernetes_cluster_role_v1.app[each.value.kind].metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.runner[each.value.kind].metadata[0].name
+    namespace = var.namespace
+  }
+}
+
+resource "kubernetes_cluster_role_v1" "helm" {
+  for_each = local.scale_sets
+
+  metadata {
+    name = "tofu-app-helm-${each.key}"
+  }
+
+  dynamic "rule" {
+    for_each = local.helm_rules
+    content {
+      api_groups = rule.value.api_groups
+      resources  = rule.value.resources
+      verbs      = local.verbs[each.key]
+    }
+  }
+}
+
+resource "kubernetes_role_binding_v1" "helm" {
+  for_each = local.helm_bindings
+
+  metadata {
+    name      = "tofu-app-helm-${each.value.kind}"
+    namespace = each.value.namespace
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role_v1.helm[each.value.kind].metadata[0].name
   }
   subject {
     kind      = "ServiceAccount"
@@ -207,6 +255,7 @@ resource "helm_release" "scale_set" {
   depends_on = [
     kubernetes_manifest.github_app,
     kubernetes_role_binding_v1.app,
+    kubernetes_role_binding_v1.helm,
     kubernetes_cluster_role_binding_v1.namespaces,
   ]
 }
