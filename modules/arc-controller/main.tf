@@ -32,6 +32,8 @@ resource "helm_release" "this" {
 
     flags = {
       logLevel = "info"
+      # JSON instead of zap's tab-separated console format, parsed by Alloy (basement config/alloy/workload-logs.alloy)
+      logFormat = "json"
       # only the runners' namespace – the scale sets name this service account explicitly
       watchSingleNamespace = var.watch_namespace
     }

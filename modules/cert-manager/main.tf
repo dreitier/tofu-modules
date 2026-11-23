@@ -24,9 +24,11 @@ resource "helm_release" "this" {
       defaultIssuerName = "letsencrypt-prod"
       defaultIssuerKind = "ClusterIssuer"
     }
+    # JSON logs (component-base --logging-format), parsed by Alloy (basement config/alloy/workload-logs.alloy)
+    extraArgs  = ["--logging-format=json"]
     resources  = var.resources.controller
-    webhook    = { resources = var.resources.webhook }
-    cainjector = { resources = var.resources.cainjector }
+    webhook    = { resources = var.resources.webhook, extraArgs = ["--logging-format=json"] }
+    cainjector = { resources = var.resources.cainjector, extraArgs = ["--logging-format=json"] }
     prometheus = {
       enabled        = true
       servicemonitor = { enabled = var.monitoring_enabled }
