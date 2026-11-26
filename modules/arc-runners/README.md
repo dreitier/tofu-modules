@@ -6,7 +6,8 @@ Runner scale sets of dreitier/basement for the OpenTofu deployments of our own a
   basement-apply  service account tofu-apps-apply: role tofu-app in the app namespaces
 ```
 Apps installed with Helm (helm_app_namespaces, e.g. backmon) additionally get the role tofu-app-helm in their
-namespace: Secrets (Helm stores its release there, the plan reads it), service accounts, PrometheusRules. Only
+namespace: Secrets (Helm stores its release there, the plan reads it), service accounts, PrometheusRules, and
+read access to ReplicaSets (Helm's wait lists them to see whether a Deployment's rollout is complete). Only
 for namespaces without credentials – whoever may read a namespace's Secrets or run pods as its service
 accounts has everything those can reach.
 The Kubernetes rights belong to the runner pod's service account (the provider's in-cluster config); AWS
