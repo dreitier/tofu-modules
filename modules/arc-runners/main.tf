@@ -2,7 +2,8 @@
 #   basement-plan   service account tofu-apps-plan:  read-only on the app namespaces
 #   basement-apply  service account tofu-apps-apply: role tofu-app in the app namespaces
 # Apps installed with Helm (helm_app_namespaces, e.g. backmon) additionally get the role tofu-app-helm in their
-# namespace: Secrets (Helm stores its release there, the plan reads it), service accounts, PrometheusRules. Only
+# namespace: Secrets (Helm stores its release there, the plan reads it), service accounts, PrometheusRules, and
+# read access to ReplicaSets (Helm's wait lists them to see whether a Deployment's rollout is complete). Only
 # for namespaces without credentials – whoever may read a namespace's Secrets or run pods as its service
 # accounts has everything those can reach.
 # The Kubernetes rights belong to the runner pod's service account (the provider's in-cluster config); AWS
@@ -26,6 +27,9 @@ locals {
   helm_rules = [
     { api_groups = [""], resources = ["secrets", "serviceaccounts"] },
     { api_groups = ["monitoring.coreos.com"], resources = ["prometheusrules"] },
+    # helm_release waits for the rollout (wait = true): Helm reads the Deployment's new ReplicaSet – read-only
+    # for apply as well, the Deployment controller owns them
+    { api_groups = ["apps"], resources = ["replicasets"], verbs = ["get", "list", "watch"] },
   ]
   verbs = {
     plan  = ["get", "list", "watch"]
@@ -132,7 +136,7 @@ resource "kubernetes_cluster_role_v1" "helm" {
     content {
       api_groups = rule.value.api_groups
       resources  = rule.value.resources
-      verbs      = local.verbs[each.key]
+      verbs      = try(rule.value.verbs, local.verbs[each.key])
     }
   }
 }
