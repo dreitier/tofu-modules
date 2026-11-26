@@ -139,3 +139,14 @@ variable "backup_sidecar_resources" {
   description = "Resources of the Barman Cloud plugin sidecar in the instance pods – every container needs requests + a memory limit (Kyverno require-requests-limits); sized from the 7-day maxima in Prometheus (2026-11-18)"
   default     = { requests = { cpu = "20m", memory = "96Mi" }, limits = { memory = "256Mi" } }
 }
+
+variable "primary_update_method" {
+  type        = string
+  default     = "restart"
+  description = "How the primary is updated at the end of a rolling update (primaryUpdateMethod): restart = in place (CNPG default), switchover = promote the updated replica first (shorter interruption; the primary then moves between the instances). Needs instances > 1 to have an effect"
+
+  validation {
+    condition     = contains(["restart", "switchover"], var.primary_update_method)
+    error_message = "primary_update_method must be \"restart\" or \"switchover\"."
+  }
+}

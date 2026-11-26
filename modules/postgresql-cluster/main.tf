@@ -110,6 +110,7 @@ resource "kubernetes_manifest" "cluster" {
       {
         instances             = var.instances
         imageName             = var.image
+        primaryUpdateMethod   = var.primary_update_method
         enableSuperuserAccess = false
         storage               = { storageClass = var.storage_class, size = var.storage_size }
         resources             = var.resources
